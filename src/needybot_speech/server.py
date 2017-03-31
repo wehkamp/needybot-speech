@@ -4,7 +4,9 @@ import actionlib
 import hashlib
 import json
 import os
-import pyvona
+from boto3 import Session
+from collections import namedtuple
+from botocore.exceptions import BotoCoreError, ClientError
 import rospkg
 import rospy
 import string
@@ -16,6 +18,18 @@ import yaml
 from needybot_msgs.msg import *
 from pydash import _
 from std_msgs.msg import Empty
+
+
+ResponseStatus = namedtuple("HTTPStatus",
+                            ["code", "message"])
+
+ResponseData = namedtuple("ResponseData",
+                          ["status", "content_type", "data_stream"])
+
+HTTP_STATUS = {"OK": ResponseStatus(code=200, message="OK"),
+               "BAD_REQUEST": ResponseStatus(code=400, message="Bad request"),
+               "NOT_FOUND": ResponseStatus(code=404, message="Not found"),
+               "INTERNAL_SERVER_ERROR": ResponseStatus(code=500, message="Internal server error")}
 
 
 class SoundProcess(threading.Thread):
@@ -67,6 +81,20 @@ class SoundProcess(threading.Thread):
         self.handle_process_complete()
 
 
+class HTTPStatusError(Exception):
+    """Exception wrapping a value from http.server.HTTPStatus"""
+
+    def __init__(self, status, description=None):
+        """
+        Constructs an error instance from a tuple of
+        (code, message, description), see http.server.HTTPStatus
+        """
+        super(HTTPStatusError, self).__init__()
+        self.code = status.code
+        self.message = status.message
+        self.explain = description
+
+
 class SpeechActionServer(object):
     """
     This class is an implementation of a ROS actionlib server. It handles
@@ -105,14 +133,14 @@ class SpeechActionServer(object):
             'contrast', '75',
             'norm'
         ]
-        self.voice = pyvona.create_voice(
-            os.environ.get('IVONA_ACCESS_KEY'),
-            os.environ.get('IVONA_SECRET_KEY'))
+
+        self.awsSession = Session(profile_name="polly")
+        self.voice = self.awsSession.client("polly")
+
         self.voice.voice_name = rospy.get_param(
-            '/needybot/speech/voice/name', 'Justin')
-        self.voice.speech_rate = rospy.get_param(
-            '/needybot/speech/voice/speech_rate', 'medium')
-        self.voice.codec = rospy.get_param('/needybot/speech/voice/codec', 'ogg')
+            '/needybot/speech/voice/name', 'Ruben')
+        self.voice.codec = rospy.get_param('/needybot/speech/voice/codec', 'audio/ogg')
+
         self.sound_process = None
 
         self.cleaned_pub = rospy.Publisher(
@@ -198,7 +226,6 @@ class SpeechActionServer(object):
                     'effects': '${joined effects array',
                     'voice': {
                         'name': 'name',
-                        'speech_rate': 'speech_rate',
                         'codec': 'codec'
                     },
                     'template': 'template_text',
@@ -291,7 +318,6 @@ class SpeechActionServer(object):
         digest.update(self.clean_string(goal_key))
         digest.update(self.clean_string(parsed_text))
         digest.update(self.clean_string(self.voice.voice_name))
-        digest.update(self.clean_string(self.voice.speech_rate))
         digest.update(self.clean_string(self.voice.codec))
         digest.update(self.clean_string(' '.join(self.effects)))
         return digest.hexdigest()
@@ -318,7 +344,6 @@ class SpeechActionServer(object):
             'effects': ' '.join(self.effects),
             'voice': {
                 'name': self.voice.voice_name,
-                'speech_rate': self.voice.speech_rate,
                 'codec': self.voice.codec
             },
             'template': entry.get('template'),
@@ -339,13 +364,38 @@ class SpeechActionServer(object):
 
     def generate_raw_speech(self, payload):
         """
-        Makes an API call to Ivona to generate the raw voice sound file.
+        Makes an API call to Amazon Polly to generate the raw voice sound file.
 
         :param: payload -- dict, the dialog entry payload
         """
-        self.voice.fetch_voice(
+        self.fetch_voice(
             self.parse_template(payload['template'], payload['params']),
             payload['file'])
+
+    def fetch_voice(self, text_to_speak, filename):
+        """Fetch a voice file for given text and save it to the given file name"""
+        file_extension = ".{codec}".format(codec=self.voice.codec)
+        filename += file_extension if not filename.endswith(file_extension) else ""
+        with open(filename, 'wb') as f:
+            self.fetch_voice_fp(text_to_speak, f)
+
+    def fetch_voice_fp(self, text_to_speak, fp):
+        try:
+            response = self.voice.synthesize_speech(
+                Text=text_to_speak,
+                VoiceId=self.voice.voice_name,
+                OutputFormat=self.voice.codec
+            )
+        except (BotoCoreError, ClientError) as err:
+            # The service returned an error
+            raise HTTPStatusError(HTTP_STATUS["INTERNAL_SERVER_ERROR"],
+                                  str(err))
+        if response.get('RequestCharacters'):
+            fp.write(response.get("AudioStream").read())
+        else:
+            raise HTTPStatusError(HTTP_STATUS["INTERNAL_SERVER_ERROR"],
+                                  "Error fetching voice {}".format(response))
+
 
     def parse_template(self, template, params):
         """
@@ -385,7 +435,7 @@ class SpeechActionServer(object):
             hash: 'hash',
             file: 'filename.codec',
             effects: 'joined effects array',
-            voice: { name, speech_rate, codec }
+            voice: { name, codec }
             template: 'template text',
             params: { merged_template_params },
         }
@@ -410,7 +460,7 @@ class SpeechActionServer(object):
                     if not isinstance(v, dict):
                         ok = False
                         break
-                    for j in ['name', 'speech_rate', 'codec']:
+                    for j in ['name', 'codec']:
                         if not v.get(j, None):
                             ok = False
                             break
