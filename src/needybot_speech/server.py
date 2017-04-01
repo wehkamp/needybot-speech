@@ -374,7 +374,8 @@ class SpeechActionServer(object):
 
     def fetch_voice(self, text_to_speak, filename):
         """Fetch a voice file for given text and save it to the given file name"""
-        file_extension = ".{codec}".format(codec=self.voice.codec)
+        # file_extension = ".{codec}".format(codec=self.voice.codec)
+        file_extension  = ".ogg"
         filename += file_extension if not filename.endswith(file_extension) else ""
         with open(filename, 'wb') as f:
             self.fetch_voice_fp(text_to_speak, f)
