@@ -125,7 +125,6 @@ class TestNeedybotSpeech(unittest.TestCase):
             'effects': ' '.join(self.server.effects),
             'voice': {
                 'name': self.server.voice.voice_name,
-                'speech_rate': self.server.voice.speech_rate,
                 'codec': self.server.voice.codec
             },
             'template': rospy.get_param(
@@ -181,7 +180,6 @@ class TestNeedybotSpeech(unittest.TestCase):
             'effects': 'joined effects array',
             'voice': {
                 'name': 'Justin',
-                'speech_rate': 'medium',
                 'codec': 'ogg'
             },
             'template': 'a ${template}',
