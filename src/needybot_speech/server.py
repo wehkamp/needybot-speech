@@ -11,6 +11,7 @@ import rospkg
 import rospy
 import string
 import subprocess
+from contextlib import closing
 import sys
 import threading
 import yaml
@@ -389,9 +390,11 @@ class SpeechActionServer(object):
             )
         except (BotoCoreError, ClientError) as err:
             # The service returned an error
-            raise str(err)
-        if response.get('RequestCharacters'):
-            fp.write(response.get("AudioStream").read())
+            raise HTTPStatusError(HTTP_STATUS["INTERNAL_SERVER_ERROR"],
+                                  str(err))
+        if "AudioStream" in response:
+            with closing(response["AudioStream"]) as stream:
+                fp.write(stream.read())
         else:
             raise "Error fetching voice {}".format(response)
 
