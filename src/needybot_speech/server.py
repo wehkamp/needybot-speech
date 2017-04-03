@@ -139,7 +139,7 @@ class SpeechActionServer(object):
 
         self.voice.voice_name = rospy.get_param(
             '/needybot/speech/voice/name', 'Ruben')
-        self.voice.codec = rospy.get_param('/needybot/speech/voice/codec', 'audio/ogg')
+        self.voice.codec = rospy.get_param('/needybot/speech/voice/codec', 'ogg_vorbis')
 
         self.sound_process = None
 
@@ -389,13 +389,11 @@ class SpeechActionServer(object):
             )
         except (BotoCoreError, ClientError) as err:
             # The service returned an error
-            raise HTTPStatusError(HTTP_STATUS["INTERNAL_SERVER_ERROR"],
-                                  str(err))
+            raise str(err)
         if response.get('RequestCharacters'):
             fp.write(response.get("AudioStream").read())
         else:
-            raise HTTPStatusError(HTTP_STATUS["INTERNAL_SERVER_ERROR"],
-                                  "Error fetching voice {}".format(response))
+            raise "Error fetching voice {}".format(response)
 
 
     def parse_template(self, template, params):
